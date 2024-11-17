@@ -1,0 +1,311 @@
+// includes
+#include <iostream>
+#include <intrin.h>
+
+// my includes
+#include <Utils/Includes.h>
+#include <Utils/SDK.h>
+#include <Utils/Utils.h>
+#include <Libraries/Fonts/Font.h>
+#include <Libraries/kiero/minhook/include/MinHook.h>
+#include <Libraries/Il2cpp_Resolver/il2cpp_resolver.hpp>
+#include <Libraries/Callback.hpp>
+#include <Libraries/Il2cpp_Resolver/Utils/VFunc.hpp>
+#include <Libraries/PaternScan.hpp>
+#include <Core/HooksFunctions.h>
+#include <Core/Cheats.h>
+
+using namespace Variables;
+
+
+#pragma region ImGui
+	extern LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
+	Present oPresent;
+	HWND window = NULL;
+	WNDPROC oWndProc;
+	ID3D11Device* pDevice = NULL;
+	ID3D11DeviceContext* pContext = NULL;
+	ID3D11RenderTargetView* mainRenderTargetView;
+#pragma endregion
+
+static bool FindSigs() {
+
+	// UnityEngine.Shader::Find
+	Offsets::UnityEngineShader__FindShader_Offset = Utils::SearchSignatureByClassAndFunctionName("UnityEngine.Shader", "Find");
+
+	// UnityEngine.Time::get_timeScale, UnityEngine.Time::set_timeScale
+	Offsets::UnityEngineTime__GetTimeScale_Offset = Utils::SearchSignatureByClassAndFunctionName("UnityEngine.Time", "get_timeScale");
+	Offsets::UnityEngineTime__SetTimeScale_Offset = Utils::SearchSignatureByClassAndFunctionName("UnityEngine.Time", "set_timeScale");
+
+	// Example: Health::TakeDamage, Health::Heal
+	// Offsets::Health__TakeDamage_Offset = SearchSignatureByClassAndFunctionName("Health", "TakeDamage");
+	// Offsets::Health__Heal_Offset = SearchSignatureByClassAndFunctionName("Health", "Heal");
+	Offsets::test_Offset = Utils::SearchSignatureByClassAndFunctionName("UnityEngine.Component", "GetComponent<BulletFlyby>");
+
+	return true;
+}
+
+static void EnableHooks() {
+	if(MH_Initialize() != MH_OK)
+	{
+
+		//if (MH_CreateHook(reinterpret_cast<LPVOID*>(Offsets::test_Offset), &HooksFunctions::Health__TakeDamage_hook, (LPVOID*)//&HooksFunctions::Health__TakeDamage) == MH_OK)
+		//{
+		//	MH_EnableHook(reinterpret_cast<LPVOID*>(Offsets::test_Offset));
+		//}
+		//else
+		//{
+		//	printf("Faild to set hook 1");
+		//}
+	}
+	else
+	{
+		printf("MinHook Faild");
+	}
+
+}
+
+static void InitImGui()
+{
+	ImGui::CreateContext();
+	ImGuiIO& io = ImGui::GetIO();
+	io.ConfigFlags = ImGuiConfigFlags_NoMouseCursorChange;
+	ImGui_ImplWin32_Init(window);
+	ImGui_ImplDX11_Init(pDevice, pContext);
+}
+
+static void InitVars() {
+	SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), 0x03);
+	std::cout << "\n*******************************************************************************" << std::endl;
+	SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), FOREGROUND_GREEN);
+	std::cout << R"( What should i put as text here something funny? somthing raceist? monkey?)" << std::endl;
+	SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), 0x03);
+	std::cout << "\n*******************************************************************************\n" << std::endl;
+	SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), 0x0F);
+
+	if (IL2CPP::Initialize(true)) {
+		std::cout << "[ " << Prefix << " ] Il2Cpp initialized\n" << std::endl;
+	}
+	else {
+		std::cout << "[ " << Prefix << " ] Il2Cpp initialize failed, quitting..." << std::endl;
+		Sleep(300);
+		exit(0);
+	}
+	SDK::Base = (uintptr_t)GetModuleHandleA(NULL);
+	std::cout << "[ " << Prefix << " ] Base Address --> " << SDK::UnityPlayer << "\n" << std::endl;
+	SDK::GameAssembly = (uintptr_t)GetModuleHandleA(GameAssemblyName);
+	std::cout << "[ " << Prefix << " ] GameAssembly Base Address --> " << SDK::UnityPlayer << "\n" << std::endl;
+	SDK::UnityPlayer = (uintptr_t)GetModuleHandleA(UnityPlayerName);
+	std::cout << "[ " << Prefix << " ] UnityPlayer Base Address --> " << SDK::UnityPlayer << "\n" << std::endl;
+	std::cout << "=============================================================================\n" << std::endl;
+	std::cout << "\n" << std::endl;
+}
+
+static void HandleInputs() {
+	if (GetAsyncKeyState(KEYS::SHOWMENU_KEY) & 1)
+	{
+		CheatMenuVariables::ShowMenu = !CheatMenuVariables::ShowMenu;
+	}
+
+	if (GetAsyncKeyState(KEYS::DEATTACH_KEY) & 1)
+	{
+		MH_DisableHook(MH_ALL_HOOKS);
+		MH_Uninitialize();
+		CheatMenuVariables::ShowMenu = false;
+
+		
+	}
+}
+
+static LRESULT __stdcall WndProc(const HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+
+	if (CheatMenuVariables::ShowMenu && ImGui_ImplWin32_WndProcHandler(hWnd, uMsg, wParam, lParam))
+		return true;
+
+	if (CheatMenuVariables::ShowMenu)
+		return true;
+
+	return CallWindowProcA(oWndProc, hWnd, uMsg, wParam, lParam);
+}
+
+static HRESULT __stdcall hkPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT Flags)
+{
+	#pragma region Attach+Init
+		void* m_pThisThread = IL2CPP::Thread::Attach(IL2CPP::Domain::Get());
+
+		if (!System::Init)
+		{
+			if (SUCCEEDED(pSwapChain->GetDevice(__uuidof(ID3D11Device), (void**)&pDevice)))
+			{
+				pDevice->GetImmediateContext(&pContext);
+				DXGI_SWAP_CHAIN_DESC sd;
+				pSwapChain->GetDesc(&sd);
+				window = sd.OutputWindow;
+				ID3D11Texture2D* pBackBuffer = nullptr;
+				pSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (LPVOID*)&pBackBuffer);
+				pDevice->CreateRenderTargetView(pBackBuffer, NULL, &mainRenderTargetView);
+				pBackBuffer->Release();
+				oWndProc = (WNDPROC)SetWindowLongPtr(window, GWLP_WNDPROC, (LONG_PTR)WndProc);
+				InitImGui();
+				ImGui::GetIO().Fonts->AddFontDefault();
+				ImFontConfig font_cfg;
+				font_cfg.GlyphExtraSpacing.x = 1.2;
+				gameFont = ImGui::GetIO().Fonts->AddFontFromMemoryTTF(TTSquaresCondensedBold, 14, 14, &font_cfg);
+				ImGui::GetIO().Fonts->AddFontDefault();
+				
+				CheatVariables::ChamsShader = GameFunctions::UnityEngine_Shader__Find(IL2CPP::String::New("Hidden/Internal-Colored"));
+
+				System::Init = true;
+			}
+			else {
+				return oPresent(pSwapChain, SyncInterval, Flags);
+			}
+		}
+
+		pContext->RSGetViewports(&System::vps, &System::Viewport);
+		System::ScreenSize = { System::Viewport.Width, System::Viewport.Height };
+		System::ScreenCenter = { System::Viewport.Width / 2.0f, System::Viewport.Height / 2.0f };
+	#pragma endregion
+
+	#pragma region BeginScene
+
+		ImGui_ImplDX11_NewFrame();
+		ImGui_ImplWin32_NewFrame();
+		ImGui::NewFrame();
+
+	#pragma endregion
+
+	#pragma region Watermark
+		if (CheatMenuVariables::Watermark)
+		{
+			Utils::DrawOutlinedText(gameFont, ImVec2(System::ScreenCenter.x, System::ScreenSize.y - 20), 13.0f, CheatVariables::RainbowColor, true, Prefix.c_str());
+			Utils::DrawOutlinedText(gameFont, ImVec2(System::ScreenCenter.x, 5), 13.0f, CheatVariables::RainbowColor, true, "[ %.1f FPS ]", ImGui::GetIO().Framerate);
+		}
+	#pragma endregion
+
+	#pragma region CHEATS
+
+		GetCursorPos(&System::MousePos);
+		ScreenToClient(window, &System::MousePos);
+
+		HandleInputs();
+
+		// Main cheats loop
+		try { CheatsLoop(); }
+		catch (...) {}
+
+		if (CheatMenuVariables::ShowMenu)
+		{
+			//DrawMouse();
+			DrawMenu();
+		}
+
+		ImGuiDrawAdd = ImGui::GetForegroundDrawList();
+
+
+
+		if (CheatMenuVariables::Crosshair) {
+			ImColor color = CheatMenuVariables::RainbowCrosshair ? CheatVariables::RainbowColor : CheatMenuVariables::CrosshairColor;
+			switch (CheatMenuVariables::CrosshairType)
+			{
+			case 0:
+				ImGuiDrawAdd->AddLine(ImVec2(System::ScreenCenter.x - CheatMenuVariables::CrosshairSize, System::ScreenCenter.y), ImVec2((System::ScreenCenter.x - CheatMenuVariables::CrosshairSize) + (CheatMenuVariables::CrosshairSize * 2), System::ScreenCenter.y), color, 1.2f);
+				ImGuiDrawAdd->AddLine(ImVec2(System::ScreenCenter.x, System::ScreenCenter.y - CheatMenuVariables::CrosshairSize), ImVec2(System::ScreenCenter.x, (System::ScreenCenter.y - CheatMenuVariables::CrosshairSize) + (CheatMenuVariables::CrosshairSize * 2)), color, 1.2f);
+				break;
+			case 1:
+				ImGuiDrawAdd->AddCircle(ImVec2(System::ScreenCenter.x, System::ScreenCenter.y), CheatMenuVariables::CrosshairSize, color, 100, 1.2f);
+				break;
+			}
+		}
+
+		if (CheatMenuVariables::AimbotFOVCheck) {
+			ImGuiDrawAdd->AddCircle(ImVec2(System::ScreenCenter.x, System::ScreenCenter.y), CheatMenuVariables::AimbotFOV, ImColor(255, 255, 255), 360);
+		}
+
+	#pragma endregion
+
+	#pragma region EndScene
+		ImGui::Render();
+	#pragma endregion
+
+	#pragma region Deattach
+
+		pContext->OMSetRenderTargets(1, &mainRenderTargetView, NULL);
+		ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+
+		IL2CPP::Thread::Detach(m_pThisThread);
+
+	#pragma endregion	
+	 
+	return oPresent(pSwapChain, SyncInterval, Flags);
+}
+
+static void Rainbow() {
+	float isRed = 0.0f, isGreen = 0.01f, isBlue = 0.0f;
+
+	while (true)
+	{
+		if (ImGui::GetFrameCount() % 1 == 0)
+		{
+			if (isGreen == 0.01f && isBlue == 0.0f) isRed += 0.01f;
+			if (isRed > 0.99f && isBlue == 0.0f) { isRed = 1.0f; isGreen += 0.01f; }
+			if (isGreen > 0.99f && isBlue == 0.0f) { isGreen = 1.0f; isRed -= 0.01f; }
+			if (isRed < 0.01f && isGreen == 1.0f) { isRed = 0.0f; isBlue += 0.01f; }
+			if (isBlue > 0.99f && isRed == 0.0f) { isBlue = 1.0f; isGreen -= 0.01f; }
+			if (isGreen < 0.01f && isBlue == 1.0f) { isGreen = 0.0f; isRed += 0.01f; }
+			if (isRed > 0.99f && isGreen == 0.0f) { isRed = 1.0f; isBlue -= 0.01f; }
+			if (isBlue < 0.01f && isGreen == 0.0f) { isBlue = 0.0f; isRed += 0.01f; if (isRed < 0.01f) isGreen = 0.01f; }
+		}
+
+		CheatVariables::Rainbow= ImVec4(isRed, isGreen, isBlue, 1.0f);
+		CheatVariables::RainbowColor = ImColor(CheatVariables::Rainbow.x, CheatVariables::Rainbow.y, CheatVariables::Rainbow.z);
+
+		Sleep(20);
+	}
+}
+
+static void Setup()
+{
+	if (DEBUG) {
+		Utils::CreateConsole();
+		system("cls");
+	}
+	InitVars();
+
+	IL2CPP::Callback::Initialize();
+
+	FindSigs();
+	EnableHooks();
+
+	kiero::bind(8, (void**)&oPresent, hkPresent);
+
+
+	CreateThread(NULL, NULL, (LPTHREAD_START_ROUTINE)CacheManager, NULL, NULL, NULL);
+}
+
+static DWORD WINAPI MainThread(LPVOID lpReserved)
+{
+	bool initHook = false;
+	do
+	{
+		if (kiero::init(kiero::RenderType::D3D11) == kiero::Status::Success)
+		{
+			Setup();
+			initHook = true;
+			System::InitIL2Cpp = true;
+
+		}
+	} while (!initHook);
+	return TRUE;
+}
+
+static BOOL WINAPI DllMain(HMODULE mod, DWORD reason, LPVOID lpReserved)
+{
+	if (reason == 1)
+	{
+		DisableThreadLibraryCalls(mod);
+		CreateThread(nullptr, 0, MainThread, mod, 0, nullptr);
+	}
+	return TRUE;
+}
